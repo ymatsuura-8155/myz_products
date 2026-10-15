@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>宮崎市産 農畜水産物 国内流通動態 白地図ビジュアライザー</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- D3.js for geographic coordinates and flow paths -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <!-- TopoJSON Client for accurate Japan cartography -->
+  <script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap');
+    body {
+      font-family: 'Noto Sans JP', 'Inter', sans-serif;
+      background-color: #F8FAFC;
+      color: #0F172A;
+    }
+
+    /* 白地図スタイル */
+    .pref-path {
+      stroke: #94A3B8;
+      stroke-width: 0.75px;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      transition: fill 0.25s ease, stroke 0.25s ease, stroke-width 0.25s ease, filter 0.25s ease;
+      cursor: pointer;
+    }
+    .pref-path:hover {
+      stroke: #0284C7;
+      stroke-width: 1.8px;
+      filter: drop-shadow(0 2px 6px rgba(2, 132, 199, 0.25));
+    }
+    .pref-origin {
+      stroke: #0284C7 !important;
+      stroke-width: 2.2px !important;
+      fill: #E0F2FE !important;
+    }
+
+    /* 流れる光線アニメーション */
+    .flow-line-base {
+      stroke-dasharray: 6, 6;
+      animation: dashFlow 20s linear infinite;
+    }
+
+    @keyframes dashFlow {
+      to {
+        stroke-dashoffset: -1000;
+      }
+    }
+
+    /* パルス光点アニメーション */
+    .flow-particle {
+      filter: drop-shadow(0 2px 5px rgba(2, 132, 199, 0.45));
+    }
+
+    /* 宮崎市発信 レーダー波紋アニメーション */
+    @keyframes radarWave {
+      0% {
+        r: 5;
+        opacity: 0.95;
+        stroke-width: 2.4;
+      }
+      100% {
+        r: 46;
+        opacity: 0;
+        stroke-width: 0.4;
+      }
+    }
+    .radar-ring {
+      animation: radarWave 2.8s ease-out infinite;
+    }
+    .radar-ring-2 {
+      animation: radarWave 2.8s ease-out 1.4s infinite;
+    }
+
+    /* カスタムスクロールバー */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #F1F5F9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94A3B8;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col overflow-x-hidden bg-[#F8FAFC] text-slate-900">
+
+  <header class="border-b border-slate-200 bg-white/95 backdrop-blur sticky top-0 z-40 px-4 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 via-blue-600 to-emerald-500 flex items-center justify-center shadow-md shadow-sky-500/20 text-white">
+        <i data-lucide="navigation" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-lg font-bold tracking-tight text-slate-900">宮崎市産 農畜水産物 国内流通動態マップ</h1>
+          <span class="px-2 py-0.5 text-xs font-semibold rounded-md bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
+            宮崎市特化版
+          </span>
+          <span class="hidden sm:inline-block px-2 py-0.5 text-[11px] font-medium rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+            🌾 日本農業遺産 (田野・清武) 連携
+          </span>
+        </div>
+        <p class="text-xs text-slate-500">宮崎港フェリー・宮崎空港・宮崎IC直結。中核市・宮崎市全域（佐土原・田野・清武・高岡・青島）の出荷動態</p>
+      </div>
+    </div>
+
+    <!-- 検索とコントロール -->
+    <div class="flex items-center gap-2.5 flex-1 max-w-md ml-auto">
+      <div class="relative w-full">
+        <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+        <input type="text" id="searchInput" placeholder="宮崎市産品を検索 (例: 天日干し大根, きゅうり, 日向夏, 伊勢海老, 佐土原ナス...)" 
+          class="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 transition-all shadow-xs">
+      </div>
+      <button id="resetViewBtn" title="全国表示にリセット" class="px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:text-slate-900 transition flex items-center gap-1 shadow-xs shrink-0">
+        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+        <span>全体表示</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden relative">
+
+    <!-- 左サイドバー: フィルタ＆品目リスト -->
+    <aside class="lg:col-span-3 border-r border-slate-200 bg-white p-4 flex flex-col gap-4 overflow-y-auto max-h-[460px] lg:max-h-[calc(100vh-65px)] shadow-xs">
+      
+      <!-- カテゴリセレクタ -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-bold text-slate-500 tracking-wider uppercase">宮崎市 品目カテゴリ</label>
+          <span class="text-[11px] text-slate-400" id="itemCountLabel">表示: 0品目</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5" id="categoryButtons">
+          <button data-category="ALL" class="cat-btn active col-span-2 px-3 py-2 rounded-lg text-xs font-medium border border-sky-500 bg-sky-50 text-sky-800 flex items-center justify-between transition">
+            <span>すべて (宮崎市主要品目)</span>
+            <span class="text-[10px] bg-sky-200/70 text-sky-900 px-1.5 py-0.5 rounded font-bold" id="cntAll">0</span>
+          </button>
+          <button data-category="VEG_FRUIT" class="cat-btn px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50/70 text-slate-700 hover:bg-slate-100 flex items-center justify-between transition">
+            <span>🥒 促成果菜 (きゅうり・ピーマン)</span>
+            <span class="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold" id="cntVegFruit">0</span>
+          </button>
+          <button data-category="HERITAGE_ROOT" class="cat-btn px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50/70 text-slate-700 hover:bg-slate-100 flex items-center justify-between transition">
+            <span>🌾 干し大根・伝統野菜</span>
+            <span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold" id="cntHeritage">0</span>
+          </button>
+          <button data-category="FRUIT" class="cat-btn px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50/70 text-slate-700 hover:bg-slate-100 flex items-center justify-between transition">
+            <span>🍊 日向夏・完熟果実</span>
+            <span class="text-[10px] bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded font-bold" id="cntFruit">0</span>
+          </button>
+          <button data-category="MEAT" class="cat-btn px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50/70 text-slate-700 hover:bg-slate-100 flex items-center justify-between transition">
+            <span>🥩 畜産 (宮崎牛・豚・地鶏)</span>
+            <span class="text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-bold" id="cntMeat">0</span>
+          </button>
+          <button data-category="SEAFOOD" class="cat-btn col-span-2 px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50/70 text-slate-700 hover:bg-slate-100 flex items-center justify-between transition">
+            <span>🦞 青島伊勢海老・佐土原うなぎ・沿岸水産</span>
+            <span class="text-[10px] bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded font-bold" id="cntSeafood">0</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 地域ブロック別クイックフィルター -->
+      <div class="border-t border-slate-100 pt-3">
+        <label class="text-xs font-bold text-slate-500 tracking-wider uppercase mb-1.5 block">主要仕向地ブロック</label>
+        <div class="flex flex-wrap gap-1" id="regionFilterPills">
+          <button data-region="ALL" class="region-pill active text-[11px] px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium shadow-xs">全国</button>
+          <button data-region="関西" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">関西 (フェリー直結)</button>
+          <button data-region="関東" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">関東 (空輸・RORO)</button>
+          <button data-region="東海" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">東海</button>
+          <button data-region="九州" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">九州 (高速直行)</button>
+          <button data-region="東北" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">東北</button>
+          <button data-region="北海道" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">北海道</button>
+          <button data-region="中四国" class="region-pill text-[11px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">中四国</button>
+        </div>
+      </div>
+
+      <!-- 宮崎市内エリアクイック紹介 -->
+      <div class="border-t border-slate-100 pt-3">
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-xs font-bold text-slate-500 tracking-wider uppercase">宮崎市の主要生産拠点</label>
+        </div>
+        <div class="grid grid-cols-3 gap-1 text-[10px] text-center">
+          <div class="bg-slate-50 border border-slate-200 rounded p-1"><strong>田野・清武</strong><span class="block text-slate-400">干し大根・日向夏</span></div>
+          <div class="bg-slate-50 border border-slate-200 rounded p-1"><strong>佐土原</strong><span class="block text-slate-400">きゅうり・うなぎ</span></div>
+          <div class="bg-slate-50 border border-slate-200 rounded p-1"><strong>高岡</strong><span class="block text-slate-400">宮崎牛・ビワ</span></div>
+          <div class="bg-slate-50 border border-slate-200 rounded p-1"><strong>住吉・広瀬</strong><span class="block text-slate-400">ピーマン・軟弱野菜</span></div>
+          <div class="bg-slate-50 border border-slate-200 rounded p-1"><strong>青島・内海</strong><span class="block text-slate-400">伊勢海老・近海魚</span></div>
+          <div class="bg-slate-50 border border-slate-200 rounded p-1"><strong>赤江・本郷</strong><span class="block text-slate-400">日向夏原産・マンゴー</span></div>
+        </div>
+      </div>
+
+      <!-- 品目選択カード一覧 -->
+      <div class="flex-1 flex flex-col overflow-hidden border-t border-slate-100 pt-3">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-bold text-slate-500 tracking-wider uppercase">品目を選択</label>
+          <span class="text-[10px] text-slate-400">クリックで地図連動</span>
+        </div>
+        <div id="productList" class="space-y-1.5 overflow-y-auto pr-1 flex-1">
+          <!-- JSで動的生成 -->
+        </div>
+      </div>
+
+      <!-- 白地図ガイダンス -->
+      <div class="bg-sky-50/80 rounded-xl p-3 border border-sky-200/80 space-y-1.5 mt-auto text-xs">
+        <h4 class="font-bold text-sky-900 flex items-center gap-1.5">
+          <i data-lucide="anchor" class="w-3.5 h-3.5 text-sky-600"></i>
+          宮崎市発 海陸空ダイレクト便
+        </h4>
+        <p class="text-[11px] text-slate-600 leading-relaxed">
+          宮崎港から神戸港への直行フェリー（宮崎カーフェリー）や大阪南港RORO船、宮崎空港からの航空当日便など、宮崎市ならではの結節点から全国へ出荷されます。
+        </p>
+      </div>
+    </aside>
+
+    <!-- 中央: 日本白地図表示エリア -->
+    <section class="lg:col-span-6 relative flex flex-col bg-white h-[580px] lg:h-auto overflow-hidden border-b lg:border-b-0">
+      
+      <!-- 地図上部ステータスバー -->
+      <div class="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-2 pointer-events-none">
+        <div class="bg-white/95 backdrop-blur border border-slate-200 px-3.5 py-1.5 rounded-lg flex items-center gap-2.5 shadow-sm pointer-events-auto">
+          <span class="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse"></span>
+          <span class="text-xs font-bold text-slate-800" id="currentSelectionBadge">宮崎市産農畜水産物 総集計</span>
+        </div>
+        
+        <!-- 白地図カラー凡例 -->
+        <div class="bg-white/95 backdrop-blur border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-3 text-[11px] text-slate-600 shadow-sm pointer-events-auto">
+          <span class="font-medium text-slate-400">宮崎市発 構成比:</span>
+          <span class="flex items-center gap-1">
+            <span class="w-3 h-3 rounded-xs bg-[#bae6fd] border border-sky-300 inline-block"></span> 1〜5%
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-3 h-3 rounded-xs bg-[#38bdf8] inline-block"></span> 5〜15%
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-3 h-3 rounded-xs bg-[#0284c7] inline-block"></span> 15%+
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-3 h-3 rounded-xs bg-white border border-slate-300 inline-block"></span> 0%
+          </span>
+        </div>
+      </div>
+
+      <!-- 地図操作ボタン群 -->
+      <div class="absolute bottom-4 right-4 z-20 flex flex-col gap-1.5">
+        <div class="bg-white border border-slate-200 rounded-lg p-1 flex flex-col gap-1 shadow-md">
+          <button id="toggleAnimBtn" class="p-2 hover:bg-slate-100 rounded-md text-slate-600 hover:text-slate-900 transition" title="光のアニメーション一時停止/再開">
+            <i data-lucide="pause" class="w-4 h-4 text-sky-600" id="animIcon"></i>
+          </button>
+          <button id="zoomInBtn" class="p-2 hover:bg-slate-100 rounded-md text-slate-600 hover:text-slate-900 transition" title="拡大">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+          </button>
+          <button id="zoomOutBtn" class="p-2 hover:bg-slate-100 rounded-md text-slate-600 hover:text-slate-900 transition" title="縮小">
+            <i data-lucide="minus" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- SVG 白地図描画コンテナ -->
+      <div id="mapContainer" class="w-full h-full flex items-center justify-center relative select-none bg-[#FAFCFF]">
+        <div id="mapLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-white/80 z-25 backdrop-blur-xs transition-opacity duration-300">
+          <div class="w-8 h-8 border-3 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+          <span class="text-xs font-medium text-slate-600 mt-2.5">日本白地図データを展開中 (宮崎市起点)...</span>
+        </div>
+        <svg id="japanMapSvg" class="w-full h-full cursor-grab active:cursor-grabbing"></svg>
+      </div>
+
+      <!-- ツールチップ -->
+      <div id="marketTooltip" class="hidden absolute z-30 bg-white/95 border border-slate-200 shadow-xl rounded-xl p-3.5 max-w-xs pointer-events-none transition-opacity duration-150 backdrop-blur text-xs">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-2 gap-2">
+          <div class="flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+            <span class="font-bold text-slate-900 text-sm" id="ttName">大阪府</span>
+          </div>
+          <span class="font-bold px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200" id="ttShare">構成比 36.5%</span>
+        </div>
+        <div class="space-y-1.5 text-[11px] text-slate-600">
+          <div class="flex justify-between">
+            <span class="text-slate-400">主要卸売市場:</span>
+            <span class="font-semibold text-slate-800 text-right" id="ttMarket">大阪本場・東部市場</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">宮崎市発推計量:</span>
+            <span class="font-semibold text-slate-800" id="ttVolume">約 38,000 t</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">宮崎市からの便:</span>
+            <span class="font-semibold text-slate-800" id="ttRoute">宮崎港〜神戸フェリー / 大阪南港RORO</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">輸送リードタイム:</span>
+            <span class="font-semibold text-slate-800" id="ttLeadTime">翌朝 6:00着 (約14時間)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右サイドバー: 詳細分析＆物流インフラ -->
+    <aside class="lg:col-span-3 border-l border-slate-200 bg-white p-4 flex flex-col gap-4 overflow-y-auto max-h-[500px] lg:max-h-[calc(100vh-65px)] shadow-xs">
+      
+      <!-- 選択品目サマリーカード -->
+      <div class="bg-gradient-to-br from-slate-50 to-sky-50/50 p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <span class="text-[10px] text-sky-700 font-bold uppercase tracking-wider bg-sky-100 px-1.5 py-0.5 rounded" id="activeCategoryTag">日本農業遺産</span>
+            <h2 class="text-xl font-bold text-slate-900 mt-1" id="activeItemTitle">田野・清武の天日干し大根（たくあん漬）</h2>
+          </div>
+          <div class="px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-800 flex flex-col items-center justify-center font-bold shadow-xs shrink-0 min-w-[64px] max-w-[130px]">
+            <span class="text-[9px] text-slate-400 font-semibold" id="itemRankLabel">日本一・遺産</span>
+            <span class="text-xs font-extrabold text-sky-600 text-center leading-tight mt-0.5" id="itemRankBadge">日本一</span>
+          </div>
+        </div>
+        <p class="text-xs text-slate-600 mt-2 leading-relaxed" id="activeItemDesc">
+          宮崎市田野町・清武町に冬の風物詩「大根やぐら」が林立。霧島おろしと太陽光で天日干しされた大根は全国生産シェア日本一を誇り、本州・関西・中京へ出荷。
+        </p>
+
+        <!-- 宮崎市特有の主産エリアタグ -->
+        <div class="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center gap-1.5">
+          <span class="text-[10px] text-slate-400 font-bold">宮崎市主産地区:</span>
+          <span class="text-[10px] bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded" id="activeCityArea">田野町・清武町</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 mt-2.5 pt-2.5 border-t border-slate-200/80 text-center">
+          <div class="bg-white p-2 rounded-lg border border-slate-200/60 shadow-2xs">
+            <span class="text-[10px] text-slate-400 block font-medium">宮崎市発推計出荷量</span>
+            <span class="text-sm font-bold text-slate-800" id="statAnnualVolume">約 12,000 t</span>
+          </div>
+          <div class="bg-white p-2 rounded-lg border border-slate-200/60 shadow-2xs">
+            <span class="text-[10px] text-slate-400 block font-medium">出荷最盛期</span>
+            <span class="text-sm font-bold text-sky-600" id="statPeakSeason">12月 〜 翌3月</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 都道府県・市場別シェアランキング（白地図連動） -->
+      <div class="bg-slate-50/70 rounded-xl p-3.5 border border-slate-200">
+        <div class="flex items-center justify-between mb-2.5">
+          <h3 class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <i data-lucide="bar-chart-2" class="w-4 h-4 text-sky-600"></i>
+            宮崎市発 主要仕向先構成比
+          </h3>
+          <span class="text-[10px] text-slate-400 font-medium">上位地域</span>
+        </div>
+        <div class="space-y-2" id="marketShareBars">
+          <!-- JSで動的生成 -->
+        </div>
+      </div>
+
+      <!-- クリックした地域の詳細インフォメーション -->
+      <div class="bg-white rounded-xl p-3.5 border border-slate-200 shadow-xs" id="selectedPrefCard">
+        <h3 class="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
+          <i data-lucide="navigation-2" class="w-4 h-4 text-sky-600"></i>
+          <span id="selectedPrefTitle">選択地域: 大阪府（本場・東部）</span>
+        </h3>
+        <div class="text-xs space-y-1.5 text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+          <p id="selectedPrefDesc" class="leading-relaxed">
+            宮崎港から夕方出航するカーフェリー・RORO船により翌朝の競りに完全同期。西日本最大の消費地として冬春きゅうりや干し大根が大量入荷。
+          </p>
+          <div class="pt-2 border-t border-slate-200/60 flex justify-between text-[11px]">
+            <span class="text-slate-400">宮崎市発 最適ルート:</span>
+            <span class="font-bold text-slate-700" id="selectedPrefTransit">宮崎港発 神戸行カーフェリー / 南港RORO</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 月別出荷カレンダー -->
+      <div class="bg-slate-50/70 rounded-xl p-3.5 border border-slate-200">
+        <h3 class="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
+          <i data-lucide="calendar" class="w-3.5 h-3.5 text-emerald-600"></i>
+          宮崎市の年間出荷サイクル
+        </h3>
+        <div class="grid grid-cols-12 gap-1 text-center text-[10px] mt-2" id="seasonMatrix">
+          <!-- 12ヶ月のインジケータ -->
+        </div>
+        <div class="flex justify-between text-[10px] text-slate-400 mt-2 font-medium">
+          <span>1月 (冬)</span>
+          <span>4月 (春)</span>
+          <span>7月 (夏)</span>
+          <span>10月 (秋)</span>
+          <span>12月</span>
+        </div>
+      </div>
+
+      <!-- 宮崎市の海陸空物流ハブ解説 -->
+      <div class="bg-slate-50/70 rounded-xl p-3.5 border border-slate-200 text-xs">
+        <h3 class="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
+          <i data-lucide="truck" class="w-3.5 h-3.5 text-sky-600"></i>
+          宮崎市が誇る海陸空の直結インフラ
+        </h3>
+        <div class="space-y-2 text-[11px] text-slate-600">
+          <div class="flex items-start gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-sky-500 mt-1.5 shrink-0"></span>
+            <span><strong>宮崎港（カーフェリー・RORO船）:</strong> 神戸港直行デイリーフェリー「ろっこう」「たかちほ」が夕刻出港。翌朝関西のセリへ直結する西日本最大の大動脈。</span>
+          </div>
+          <div class="flex items-start gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0"></span>
+            <span><strong>宮崎ブーゲンビリア空港（航空空輸）:</strong> 羽田・伊丹へ当日空輸。朝獲れ青島伊勢海老や完熟マンゴー「太陽のタマゴ」がその日の夕方に首都圏百貨店・高級料亭へ。</span>
+          </div>
+          <div class="flex items-start gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0"></span>
+            <span><strong>宮崎IC・清武JCT（高速幹線）:</strong> 九州道直結で福岡ベジフルスタジアムまで約3.5〜4時間。九州全域への即日保冷配送ハブ。</span>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+  </main>
+
+  <script>
+    // 主要仕向先都道府県・都市の定義
+    const PREFECTURE_HUBS = {
+      MIYAZAKI_CITY: {
+        id: 'MIYAZAKI_CITY', pref: '宮崎市', region: '九州', name: '宮崎市 (宮崎中央卸売市場・宮崎港・宮崎空港)',
+        x: 232, y: 585, isOrigin: true
+      },
+      OSAKA: {
+        id: 'OSAKA', pref: '大阪府', region: '関西', name: '大阪府 (大阪本場・東部市場)',
+        x: 442, y: 460,
+        markets: '大阪市中央卸売市場本場、東部市場',
+        route: '宮崎港発 神戸行カーフェリー / 南港直行RORO船',
+        leadTime: '翌朝 6:00着 (約14時間)',
+        desc: '宮崎港からのフェリー便に直結した最重要消費地。きゅうり・ピーマン・干し大根が毎朝大量に卸されます。'
+      },
+      TOKYO: {
+        id: 'TOKYO', pref: '東京都', region: '関東', name: '東京都 (大田・豊洲・芝浦市場)',
+        x: 615, y: 440,
+        markets: '大田市場、豊洲市場、食肉市場(芝浦)',
+        route: '宮崎空港発 羽田空輸便 / 有明直行RORO船',
+        leadTime: '当日夕方着(航空) / 翌々日未明(船便)',
+        desc: '首都圏最大マーケット。マンゴー「太陽のタマゴ」や宮崎牛、高鮮度青菜、干し大根加工品の一大仕向地。'
+      },
+      AICHI: {
+        id: 'AICHI', pref: '愛知県', region: '東海', name: '愛知県 (名古屋本場・北部市場)',
+        x: 508, y: 450,
+        markets: '名古屋市中央卸売市場本場、北部市場',
+        route: '伊勢湾フェリー / 新名神・東名阪トラック便',
+        leadTime: '翌日午後〜翌々日未明 (約18時間)',
+        desc: '中京圏の大手量販店チェーンへの定時納品網。冬春野菜や佐土原うなぎ加工品が安定流通。'
+      },
+      HYOGO: {
+        id: 'HYOGO', pref: '兵庫県', region: '関西', name: '兵庫県 (神戸本場・六甲アイランド)',
+        x: 420, y: 450,
+        markets: '神戸市中央卸売市場、姫路市場',
+        route: '宮崎カーフェリー直行 (神戸六甲アイランド着)',
+        leadTime: '翌朝 7:00着 (約15時間)',
+        desc: '宮崎港からの直行フェリーが着岸する玄関口。関西全域へ向かうトラックのハブ拠点となります。'
+      },
+      FUKUOKA: {
+        id: 'FUKUOKA', pref: '福岡県', region: '九州', name: '福岡県 (福岡中央青果・ベジフル)',
+        x: 210, y: 520,
+        markets: '福岡市中央卸売市場 (アイランドシティ)',
+        route: '宮崎自動車道・九州自動車道 直行保冷トラック',
+        leadTime: '当日夜〜翌朝未明 (約3.5-4時間)',
+        desc: '九州最大の消費ハブ。宮崎ICから直行でき、採れたての高鮮度な野菜や近海魚が最短で届きます。'
+      },
+      KANAGAWA: {
+        id: 'KANAGAWA', pref: '神奈川県', region: '関東', name: '神奈川県 (横浜・川崎市場)',
+        x: 605, y: 458,
+        markets: '横浜市中央卸売市場、南部市場',
+        route: '東京港中継保冷便 / 東名陸送',
+        leadTime: '翌々日朝 (約26時間)',
+        desc: '湘南・京浜工業地帯の量販店・外食産業向け促成きゅうりや宮崎ブランドポークの主力仕向地。'
+      },
+      KYOTO: {
+        id: 'KYOTO', pref: '京都府', region: '関西', name: '京都府 (京都市中央第一市場)',
+        x: 458, y: 435,
+        markets: '京都市中央卸売市場第一市場',
+        route: '神戸港経由名神陸送',
+        leadTime: '翌朝 8:30着 (約16時間)',
+        desc: '京料理の伝統料亭や高級割烹へ、青島産伊勢海老や佐土原ナス、完熟日向夏が厳選供給されます。'
+      },
+      HIROSHIMA: {
+        id: 'HIROSHIMA', pref: '広島県', region: '中四国', name: '広島県 (広島中央市場)',
+        x: 350, y: 465,
+        markets: '広島市中央卸売市場',
+        route: '山陽自動車道 / 九四フェリー経由陸送',
+        leadTime: '翌日未明 (約9-10時間)',
+        desc: '中四国エリアの物流中継地。量販店向け天日干し大根製品や冬春ピーマンが流通。'
+      },
+      SAITAMA: {
+        id: 'SAITAMA', pref: '埼玉県', region: '関東', name: '埼玉県 (大宮市場・川越市場)',
+        x: 608, y: 418,
+        markets: 'さいたま市大宮市場、川越総合卸売市場',
+        route: '首都高・圏央道経由保冷車',
+        leadTime: '翌々日朝 (約28時間)',
+        desc: '首都圏北部の広域加工・パッケージセンターへ業務用きゅうりや干し大根が搬入されます。'
+      },
+      MIYAGI: {
+        id: 'MIYAGI', pref: '宮城県', region: '東北', name: '宮城県 (仙台市中央市場)',
+        x: 690, y: 320,
+        markets: '仙台市中央卸売市場',
+        route: '東北道直行 / 東京有明中継',
+        leadTime: '3日目早朝 (約32時間)',
+        desc: '東北最大の拠点。真冬に寒冷で野菜が不足する時期、宮崎市の促成きゅうり・ピーマンが欠かせません。'
+      },
+      HOKKAIDO: {
+        id: 'HOKKAIDO', pref: '北海道', region: '北海道', name: '北海道 (札幌市中央市場)',
+        x: 720, y: 150,
+        markets: '札幌市中央卸売市場',
+        route: '敦賀・舞鶴フェリー中継 / 新千歳航空便',
+        leadTime: '4日目早朝 (約48時間)',
+        desc: '冬の北海道で太陽の恵みあふれる宮崎市の完熟日向夏、マンゴー、促成野菜が高値で支持されます。'
+      }
+    };
+
+    // 宮崎市特化の農畜水産データベース
+    const PRODUCE_DATABASE = [
+      // === 促成果菜類 (VEG_FRUIT) ===
+      {
+        id: 'miyazaki_cucumber',
+        name: '宮崎市産 冬春きゅうり',
+        cityArea: '佐土原町・住吉・清武町',
+        category: 'VEG_FRUIT',
+        categoryName: '促成果菜類',
+        rank: '全国市町村トップクラス',
+        desc: '宮崎市は全国有数のきゅうり産地。温暖な冬の日照を活かした促成栽培で、みずみずしくパリッとした歯ごたえ。宮崎港から神戸行フェリーで翌朝関西の市場へ直送されます。',
+        annualVolume: '約 21,500 t (宮崎市域推計)',
+        peakSeason: '12月 〜 翌5月 (冬春促成)',
+        months: [1, 1, 1, 1, 0.85, 0.5, 0.2, 0.1, 0.2, 0.5, 0.8, 0.95],
+        color: '#10B981',
+        destinations: [
+          { hubId: 'OSAKA', share: 38.0 },
+          { hubId: 'TOKYO', share: 29.0 },
+          { hubId: 'AICHI', share: 13.5 },
+          { hubId: 'HYOGO', share: 8.5 },
+          { hubId: 'FUKUOKA', share: 5.5 },
+          { hubId: 'HIROSHIMA', share: 3.5 },
+          { hubId: 'KANAGAWA', share: 2.0 }
+        ]
+      },
+      {
+        id: 'miyazaki_bell_pepper',
+        name: '宮崎市産 冬春ピーマン',
+        cityArea: '住吉・広瀬・木花',
+        category: 'VEG_FRUIT',
+        categoryName: '促成果菜類',
+        rank: '日本一（県域トップ生産地）',
+        desc: '苦味が少なく肉厚で甘みのある「グリーンザウルス」。宮崎平野の豊かな日照時間とハウス設備により、厳冬期から春にかけて首都圏・関西の主要スーパーへ安定供給。',
+        annualVolume: '約 11,200 t (宮崎市域推計)',
+        peakSeason: '11月 〜 翌5月',
+        months: [1, 1, 1, 1, 0.9, 0.45, 0.15, 0.1, 0.2, 0.55, 0.85, 0.98],
+        color: '#059669',
+        destinations: [
+          { hubId: 'TOKYO', share: 43.0 },
+          { hubId: 'OSAKA', share: 26.0 },
+          { hubId: 'AICHI', share: 12.0 },
+          { hubId: 'KANAGAWA', share: 6.5 },
+          { hubId: 'FUKUOKA', share: 6.0 },
+          { hubId: 'SAITAMA', share: 4.0 },
+          { hubId: 'MIYAGI', share: 2.5 }
+        ]
+      },
+      {
+        id: 'sadowara_eggplant',
+        name: '佐土原ナス（伝統野菜）',
+        cityArea: '佐土原町',
+        category: 'VEG_FRUIT',
+        categoryName: '促成果菜類',
+        rank: '宮崎市発祥・伝統江戸野菜',
+        desc: '江戸時代から旧佐土原藩で栽培され、一度途絶えかけた種から復活した奇跡の伝統ナス。果肉が絹のように柔らかく、加熱するとトロける食感で関西・首都圏の一流料亭・割烹へ直行。',
+        annualVolume: '約 380 t',
+        peakSeason: '4月 〜 10月 (初夏・夏秋)',
+        months: [0, 0, 0.1, 0.7, 0.9, 1, 1, 0.85, 0.7, 0.4, 0.1, 0],
+        color: '#6366F1',
+        destinations: [
+          { hubId: 'OSAKA', share: 36.0 },
+          { hubId: 'KYOTO', share: 24.0 },
+          { hubId: 'TOKYO', share: 22.0 },
+          { hubId: 'FUKUOKA', share: 11.0 },
+          { hubId: 'AICHI', share: 7.0 }
+        ]
+      },
+
+      // === 干し大根・伝統野菜 (HERITAGE_ROOT) ===
+      {
+        id: 'dried_radish_tano',
+        name: '田野・清武の天日干し大根（たくあん）',
+        cityArea: '田野町・清武町（日本農業遺産）',
+        category: 'HERITAGE_ROOT',
+        categoryName: '干し大根・伝統',
+        rank: '生産量・シェア日本一 (日本農業遺産)',
+        desc: '鰐塚山地からの寒風「鰐塚おろし」と快晴の日照を活用し、巨大な「大根やぐら」で2週間天日干し。甘みと旨みが凝縮された日本一の干し大根は、全国の量販店・漬物メーカーへ供給。',
+        annualVolume: '約 12,000 t (原料換算)',
+        peakSeason: '12月 〜 翌3月 (やぐら干し・新物出荷)',
+        months: [1, 0.9, 0.7, 0.5, 0.4, 0.4, 0.4, 0.4, 0.5, 0.6, 0.8, 1],
+        color: '#D97706',
+        destinations: [
+          { hubId: 'OSAKA', share: 34.0 },
+          { hubId: 'TOKYO', share: 28.0 },
+          { hubId: 'AICHI', share: 15.0 },
+          { hubId: 'FUKUOKA', share: 11.0 },
+          { hubId: 'HIROSHIMA', share: 6.0 },
+          { hubId: 'HYOGO', share: 4.0 },
+          { hubId: 'SAITAMA', share: 2.0 }
+        ]
+      },
+      {
+        id: 'tano_sweet_potato',
+        name: '田野・清武かんしょ（さつまいも）',
+        cityArea: '田野町・清武町・高岡町',
+        category: 'HERITAGE_ROOT',
+        categoryName: '干し大根・根菜',
+        rank: '宮崎市代表銘柄 (宮崎紅・紅はるか)',
+        desc: '水はけの良い黒ボク火山灰土壌で育つ高糖度なさつまいも。天日干し大根との輪作体系で作られ、焼き芋用青果や市内酒蔵の芋焼酎原料、全国スイーツ店へ通年出荷。',
+        annualVolume: '約 14,800 t',
+        peakSeason: '8月 〜 翌4月 (熟成貯蔵出荷)',
+        months: [0.8, 0.8, 0.6, 0.4, 0.3, 0.2, 0.4, 0.8, 1, 1, 0.9, 0.9],
+        color: '#9333EA',
+        destinations: [
+          { hubId: 'OSAKA', share: 35.0 },
+          { hubId: 'TOKYO', share: 30.0 },
+          { hubId: 'AICHI', share: 14.0 },
+          { hubId: 'FUKUOKA', share: 11.0 },
+          { hubId: 'HYOGO', share: 6.0 },
+          { hubId: 'MIYAGI', share: 4.0 }
+        ]
+      },
+
+      // === 果実・かんきつ (FRUIT) ===
+      {
+        id: 'hyuganatsu_miyazaki_city',
+        name: '宮崎市産 日向夏（原産地ブランド）',
+        cityArea: '赤江 (原産地)・清武町・高岡町',
+        category: 'FRUIT',
+        categoryName: '日向夏・果実',
+        rank: '原産地・日本一ブランド',
+        desc: '文政年間に宮崎市赤江の真方安太郎邸で偶然発見された奇跡の柑橘。白皮の甘みと果肉の爽やかな酸味が絶妙。宮崎空港からの空輸便や保冷トラックで初夏の味覚として全国へ。',
+        annualVolume: '約 1,950 t',
+        peakSeason: '2月 〜 5月 (露地・ハウスリレー)',
+        months: [0.1, 0.6, 0.95, 1, 0.7, 0.15, 0, 0, 0, 0, 0, 0],
+        color: '#EAB308',
+        destinations: [
+          { hubId: 'TOKYO', share: 44.0 },
+          { hubId: 'OSAKA', share: 29.0 },
+          { hubId: 'FUKUOKA', share: 11.0 },
+          { hubId: 'AICHI', share: 9.0 },
+          { hubId: 'HOKKAIDO', share: 4.0 },
+          { hubId: 'KANAGAWA', share: 3.0 }
+        ]
+      },
+      {
+        id: 'mango_miyazaki_city',
+        name: '宮崎市産 完熟マンゴー「太陽のタマゴ」',
+        cityArea: '木花・本郷・佐土原町',
+        category: 'FRUIT',
+        categoryName: '日向夏・果実',
+        rank: '最高級ブランド品位日本一',
+        desc: 'ネットで自然落果するまで樹上で完熟させたアーウィン種。最高基準「糖度15度以上・350g以上」をクリアした太陽のタマゴは、宮崎空港から羽田・伊丹へ航空直送され百貨店ギフトで最高値を記録。',
+        annualVolume: '約 420 t',
+        peakSeason: '4月中旬 〜 7月',
+        months: [0, 0, 0.1, 0.65, 1, 0.9, 0.35, 0.05, 0, 0, 0, 0],
+        color: '#EA580C',
+        destinations: [
+          { hubId: 'TOKYO', share: 56.0 },
+          { hubId: 'OSAKA', share: 21.0 },
+          { hubId: 'FUKUOKA', share: 10.0 },
+          { hubId: 'AICHI', share: 6.0 },
+          { hubId: 'HOKKAIDO', share: 4.0 },
+          { hubId: 'KYOTO', share: 3.0 }
+        ]
+      },
+      {
+        id: 'tamatama_kinkan_city',
+        name: '宮崎市産 完熟きんかん「たまたま」',
+        cityArea: '高岡町・清武町・佐土原町',
+        category: 'FRUIT',
+        categoryName: '日向夏・果実',
+        rank: '全国第1位',
+        desc: '開花後210日以上樹上で完熟させ、糖度16度以上・L玉以上の大玉のみ厳選。皮ごと生で甘く食べられる宮崎市の冬のプライド。関西・首都圏の青果店・フルーツパーラーへ。',
+        annualVolume: '約 1,100 t',
+        peakSeason: '1月中旬 〜 3月',
+        months: [0.9, 1, 0.8, 0.1, 0, 0, 0, 0, 0, 0, 0, 0.2],
+        color: '#F59E0B',
+        destinations: [
+          { hubId: 'TOKYO', share: 47.0 },
+          { hubId: 'OSAKA', share: 26.0 },
+          { hubId: 'AICHI', share: 10.0 },
+          { hubId: 'KANAGAWA', share: 7.0 },
+          { hubId: 'FUKUOKA', share: 6.0 },
+          { hubId: 'HOKKAIDO', share: 4.0 }
+        ]
+      },
+
+      // === 畜産・肉類 (MEAT) ===
+      {
+        id: 'miyazaki_beef_city',
+        name: '宮崎市産 宮崎牛（黒毛和牛）',
+        cityArea: '高岡町・田野町・住吉',
+        category: 'MEAT',
+        categoryName: '畜産・肉類',
+        rank: '4大会連続 内閣総理大臣賞',
+        desc: '宮崎市高岡町や田野町の大自然で丹精込めて肥育されるA4・A5等級の最高峰黒毛和牛。宮崎ICからチルドコンテナ車で東京食肉市場（芝浦）や大阪食肉市場へ高鮮度直送。',
+        annualVolume: '約 4,200 t (枝肉換算・宮崎市域)',
+        peakSeason: '通年 (11月〜12月お歳暮・年末需要)',
+        months: [0.9, 0.8, 0.85, 0.8, 0.85, 0.8, 0.9, 0.85, 0.85, 0.9, 1, 1],
+        color: '#E11D48',
+        destinations: [
+          { hubId: 'TOKYO', share: 45.0 },
+          { hubId: 'OSAKA', share: 25.0 },
+          { hubId: 'FUKUOKA', share: 12.0 },
+          { hubId: 'AICHI', share: 8.5 },
+          { hubId: 'KANAGAWA', share: 5.0 },
+          { hubId: 'HYOGO', share: 4.5 }
+        ]
+      },
+      {
+        id: 'jitokko_city',
+        name: 'みやざき地頭鶏 (宮崎市指定農家)',
+        cityArea: '高岡町・田野町',
+        category: 'MEAT',
+        categoryName: '畜産・肉類',
+        rank: '極上地鶏・名産地',
+        desc: '澄んだ空気と清流のもと、平飼いで長期じっくり飼育。コシがあるのに柔らかくジューシーな旨味。首都圏・関西の炭火焼専門店や宮崎空港からのチルド空輸で外食店へ。',
+        annualVolume: '約 190 t',
+        peakSeason: '通年 (夏期BBQ・冬期忘年会ピーク)',
+        months: [0.9, 0.8, 0.8, 0.85, 0.9, 0.9, 0.95, 1, 0.85, 0.85, 0.95, 1],
+        color: '#F43F5E',
+        destinations: [
+          { hubId: 'TOKYO', share: 49.0 },
+          { hubId: 'FUKUOKA', share: 19.0 },
+          { hubId: 'OSAKA', share: 17.0 },
+          { hubId: 'AICHI', share: 7.5 },
+          { hubId: 'KANAGAWA', share: 4.5 },
+          { hubId: 'HIROSHIMA', share: 3.0 }
+        ]
+      },
+
+      // === 水産物 (SEAFOOD) ===
+      {
+        id: 'aoshima_lobster',
+        name: '青島・内海産 天然伊勢海老',
+        cityArea: '青島港・内海港',
+        category: 'SEAFOOD',
+        categoryName: '水産物',
+        rank: '日向灘・日南海岸の至宝',
+        desc: '青島や内海の岩礁地帯で獲れる天然イセエビ。秋の漁解禁とともに、宮崎空港から羽田・伊丹へ活魚航空便で直行。京都や銀座の一流ホテル・料亭へ生き締め鮮度で供給。',
+        annualVolume: '約 45 t',
+        peakSeason: '9月 〜 11月 (伊勢海老まつり最盛期)',
+        months: [0.1, 0, 0, 0, 0, 0, 0, 0, 1, 0.95, 0.8, 0.3],
+        color: '#0284C7',
+        destinations: [
+          { hubId: 'TOKYO', share: 42.0 },
+          { hubId: 'OSAKA', share: 26.0 },
+          { hubId: 'KYOTO', share: 16.0 },
+          { hubId: 'FUKUOKA', share: 10.0 },
+          { hubId: 'AICHI', share: 6.0 }
+        ]
+      },
+      {
+        id: 'sadowara_eel',
+        name: '佐土原産 養殖うなぎ（一ツ瀬川水系）',
+        cityArea: '佐土原町',
+        category: 'SEAFOOD',
+        categoryName: '水産物',
+        rank: '全国有数の養鰻地',
+        desc: '一ツ瀬川水系の清らかな伏流水と温暖な気候で育まれた肉厚で皮の柔らかいうなぎ。生鮮活鰻および職人手焼きの蒲焼加工品として、東京・大阪・名古屋の専門店へ。',
+        annualVolume: '約 950 t',
+        peakSeason: '6月 〜 8月 (土用の丑の日)',
+        months: [0.4, 0.4, 0.5, 0.6, 0.8, 1, 1, 0.7, 0.5, 0.4, 0.4, 0.5],
+        color: '#0D9488',
+        destinations: [
+          { hubId: 'TOKYO', share: 44.0 },
+          { hubId: 'OSAKA', share: 27.0 },
+          { hubId: 'AICHI', share: 14.0 },
+          { hubId: 'FUKUOKA', share: 8.0 },
+          { hubId: 'SAITAMA', share: 4.0 },
+          { hubId: 'KANAGAWA', share: 3.0 }
+        ]
+      },
+      {
+        id: 'aoshima_chirimen',
+        name: '青島・内海 ちりめん（釜揚げシラス）',
+        cityArea: '青島港・内海港',
+        category: 'SEAFOOD',
+        categoryName: '水産物',
+        rank: '宮崎市沿岸名物',
+        desc: '日向灘で水揚げされた新鮮なイワシの稚魚を、港の加工場で即座に天然塩で釜茹で・天日干し。ふっくらとした食感と豊かな磯の香りで、関西・首都圏のスーパー鮮魚売場へ。',
+        annualVolume: '約 680 t',
+        peakSeason: '4月 〜 11月 (春シラス・秋シラス)',
+        months: [0.2, 0.2, 0.5, 0.8, 0.9, 0.7, 0.6, 0.8, 0.95, 0.9, 0.7, 0.3],
+        color: '#0284C7',
+        destinations: [
+          { hubId: 'OSAKA', share: 36.0 },
+          { hubId: 'TOKYO', share: 32.0 },
+          { hubId: 'FUKUOKA', share: 16.0 },
+          { hubId: 'AICHI', share: 9.0 },
+          { hubId: 'HIROSHIMA', share: 7.0 }
+        ]
+      }
+    ];
+
+    // 宮崎市産 全農畜水産物の総合集計
+    const TOTAL_AGGREGATE = {
+      id: 'ALL',
+      name: '宮崎市産 農畜水産物 総集計',
+      cityArea: '宮崎市全域（佐土原・田野・清武・高岡・青島）',
+      category: 'ALL',
+      categoryName: '宮崎市総集計',
+      rank: '中核市・中核農業拠点',
+      desc: '宮崎港フェリーと宮崎空港、宮崎ICを擁する物流結節点・宮崎市。促成きゅうり・ピーマン、天日干し大根（日本農業遺産）、完熟マンゴー・日向夏、宮崎牛、青島伊勢海老・佐土原うなぎ等、年間約8万トン超が全国各地の基幹市場へ供給されています。',
+      annualVolume: '約 81,000 t (宮崎市域推計)',
+      peakSeason: '通年 (冬春青果・春初夏果実・秋伊勢海老・年末畜産)',
+      months: [0.95, 0.92, 0.9, 0.85, 0.8, 0.75, 0.8, 0.82, 0.88, 0.9, 0.95, 1.0],
+      color: '#0284C7',
+      destinations: [
+        { hubId: 'OSAKA', share: 36.5 },
+        { hubId: 'TOKYO', share: 33.5 },
+        { hubId: 'AICHI', share: 12.0 },
+        { hubId: 'FUKUOKA', share: 9.5 },
+        { hubId: 'HYOGO', share: 4.0 },
+        { hubId: 'KANAGAWA', share: 3.0 },
+        { hubId: 'HIROSHIMA', share: 1.5 }
+      ]
+    };
+
+    // カテゴリー別総集計データ定義
+    const CATEGORY_AGGREGATES = {
+      VEG_FRUIT: {
+        id: 'CAT_VEG_FRUIT',
+        name: '宮崎市産 促成果菜類 総集計',
+        cityArea: '佐土原・住吉・清武・木花',
+        category: 'VEG_FRUIT',
+        categoryName: '促成果菜 (総集計)',
+        rank: 'きゅうり・ピーマン全国上位',
+        desc: '宮崎港から神戸行フェリーを活用した翌朝関西市場同期システムにより、冬春きゅうりや促成ピーマン、伝統佐土原ナスが極めて高い鮮度で東名阪の台所へ直送されます。',
+        annualVolume: '約 33,080 t',
+        peakSeason: '11月 〜 翌5月 (冬春促成シーズン)',
+        months: [1.0, 1.0, 1.0, 1.0, 0.88, 0.52, 0.22, 0.12, 0.22, 0.52, 0.82, 0.96],
+        color: '#10B981',
+        destinations: [
+          { hubId: 'OSAKA', share: 35.0 },
+          { hubId: 'TOKYO', share: 32.5 },
+          { hubId: 'AICHI', share: 13.0 },
+          { hubId: 'HYOGO', share: 8.0 },
+          { hubId: 'FUKUOKA', share: 6.0 },
+          { hubId: 'KANAGAWA', share: 3.5 },
+          { hubId: 'HIROSHIMA', share: 2.0 }
+        ]
+      },
+      HERITAGE_ROOT: {
+        id: 'CAT_HERITAGE',
+        name: '宮崎市 田野・清武干し大根＆根菜 総集計',
+        cityArea: '田野町・清武町（日本農業遺産）',
+        category: 'HERITAGE_ROOT',
+        categoryName: '干し大根・根菜 (総集計)',
+        rank: '干し大根日本一 (日本農業遺産)',
+        desc: '巨大な「大根やぐら」で寒風天日干しする田野・清武の天日干し大根と、水はけの良い火山灰土壌で育つ良質かんしょ。関西・中京・首都圏の量販店・漬物メーカーへ定時出荷。',
+        annualVolume: '約 26,800 t',
+        peakSeason: '12月 〜 翌4月 (やぐら干し・新物出荷)',
+        months: [0.92, 0.88, 0.72, 0.50, 0.38, 0.32, 0.40, 0.65, 0.90, 0.95, 0.92, 0.96],
+        color: '#D97706',
+        destinations: [
+          { hubId: 'OSAKA', share: 34.5 },
+          { hubId: 'TOKYO', share: 29.0 },
+          { hubId: 'AICHI', share: 14.5 },
+          { hubId: 'FUKUOKA', share: 11.0 },
+          { hubId: 'HYOGO', share: 5.0 },
+          { hubId: 'HIROSHIMA', share: 4.0 },
+          { hubId: 'MIYAGI', share: 2.0 }
+        ]
+      },
+      FRUIT: {
+        id: 'CAT_FRUIT',
+        name: '宮崎市 日向夏・完熟果実 総集計',
+        cityArea: '赤江・木花・清武・高岡',
+        category: 'FRUIT',
+        categoryName: '日向夏・完熟果実 (総集計)',
+        rank: '日向夏原産地 / 太陽のタマゴ最高峰',
+        desc: '宮崎市赤江原産の日向夏、完熟マンゴー「太陽のタマゴ」、完熟きんかん「たまたま」。宮崎空港からの航空チルド便と保冷トラックで首都圏・関西の百貨店・高級果実店へ。',
+        annualVolume: '約 3,470 t',
+        peakSeason: '1月 〜 7月 (きんかん・日向夏・マンゴー)',
+        months: [0.35, 0.75, 0.90, 0.85, 0.88, 0.65, 0.28, 0.05, 0, 0, 0, 0.15],
+        color: '#EAB308',
+        destinations: [
+          { hubId: 'TOKYO', share: 48.0 },
+          { hubId: 'OSAKA', share: 26.0 },
+          { hubId: 'FUKUOKA', share: 10.0 },
+          { hubId: 'AICHI', share: 8.5 },
+          { hubId: 'KANAGAWA', share: 4.5 },
+          { hubId: 'HOKKAIDO', share: 3.0 }
+        ]
+      },
+      MEAT: {
+        id: 'CAT_MEAT',
+        name: '宮崎市 畜産・肉類 総集計',
+        cityArea: '高岡町・田野町・住吉',
+        category: 'MEAT',
+        categoryName: '畜産・肉類 (総集計)',
+        rank: '内閣総理大臣賞受賞産地',
+        desc: '宮崎市高岡・田野を中心に肥育される宮崎牛、みやざき地頭鶏。宮崎ICから九州道・名神・東名を結ぶ定温コンテナ車で、東京芝浦市場や大阪、福岡の食肉センターへ直送。',
+        annualVolume: '約 4,390 t',
+        peakSeason: '通年 (夏季BBQ・年末贈答シーズン需要)',
+        months: [0.95, 0.85, 0.85, 0.82, 0.88, 0.85, 0.92, 0.98, 0.88, 0.90, 0.98, 1.0],
+        color: '#E11D48',
+        destinations: [
+          { hubId: 'TOKYO', share: 46.0 },
+          { hubId: 'OSAKA', share: 23.5 },
+          { hubId: 'FUKUOKA', share: 14.0 },
+          { hubId: 'AICHI', share: 8.0 },
+          { hubId: 'KANAGAWA', share: 5.0 },
+          { hubId: 'HYOGO', share: 3.5 }
+        ]
+      },
+      SEAFOOD: {
+        id: 'CAT_SEAFOOD',
+        name: '宮崎市 青島伊勢海老・佐土原うなぎ・水産 総集計',
+        cityArea: '青島・内海・佐土原',
+        category: 'SEAFOOD',
+        categoryName: '水産物 (総集計)',
+        rank: '青島天然伊勢海老・佐土原うなぎ',
+        desc: '青島港・内海港の天然伊勢海老やちりめん、佐土原町の一ツ瀬川水系で育つうなぎ。宮崎空港からの空輸便や保冷トラックで、東京豊洲・京都・大阪・名古屋の専門店へ。',
+        annualVolume: '約 1,675 t',
+        peakSeason: '6月〜8月(うなぎ) / 9月〜11月(伊勢海老・秋シラス)',
+        months: [0.35, 0.35, 0.45, 0.65, 0.75, 0.85, 0.85, 0.70, 0.95, 0.90, 0.75, 0.40],
+        color: '#0284C7',
+        destinations: [
+          { hubId: 'TOKYO', share: 41.0 },
+          { hubId: 'OSAKA', share: 29.0 },
+          { hubId: 'AICHI', share: 11.5 },
+          { hubId: 'FUKUOKA', share: 9.5 },
+          { hubId: 'KYOTO', share: 6.0 },
+          { hubId: 'KANAGAWA', share: 3.0 }
+        ]
+      }
+    };
+
+    // JIS都道府県コード（01〜47）と仕向先ハブの対応テーブル
+    const PREF_CODE_INFO = {
+      "01": { name: "北海道", region: "北海道", hubKey: "HOKKAIDO" },
+      "02": { name: "青森県", region: "東北", hubKey: "MIYAGI" },
+      "03": { name: "岩手県", region: "東北", hubKey: "MIYAGI" },
+      "04": { name: "宮城県", region: "東北", hubKey: "MIYAGI" },
+      "05": { name: "秋田県", region: "東北", hubKey: "MIYAGI" },
+      "06": { name: "山形県", region: "東北", hubKey: "MIYAGI" },
+      "07": { name: "福島県", region: "東北", hubKey: "MIYAGI" },
+      "08": { name: "茨城県", region: "関東", hubKey: "TOKYO" },
+      "09": { name: "栃木県", region: "関東", hubKey: "TOKYO" },
+      "10": { name: "群馬県", region: "関東", hubKey: "TOKYO" },
+      "11": { name: "埼玉県", region: "関東", hubKey: "SAITAMA" },
+      "12": { name: "千葉県", region: "関東", hubKey: "TOKYO" },
+      "13": { name: "東京都", region: "関東", hubKey: "TOKYO" },
+      "14": { name: "神奈川県", region: "関東", hubKey: "KANAGAWA" },
+      "15": { name: "新潟県", region: "中部", hubKey: "AICHI" },
+      "16": { name: "富山県", region: "中部", hubKey: "AICHI" },
+      "17": { name: "石川県", region: "中部", hubKey: "AICHI" },
+      "18": { name: "福井県", region: "中部", hubKey: "AICHI" },
+      "19": { name: "山梨県", region: "中部", hubKey: "TOKYO" },
+      "20": { name: "長野県", region: "中部", hubKey: "AICHI" },
+      "21": { name: "岐阜県", region: "東海", hubKey: "AICHI" },
+      "22": { name: "静岡県", region: "東海", hubKey: "AICHI" },
+      "23": { name: "愛知県", region: "東海", hubKey: "AICHI" },
+      "24": { name: "三重県", region: "近畿", hubKey: "OSAKA" },
+      "25": { name: "滋賀県", region: "近畿", hubKey: "OSAKA" },
+      "26": { name: "京都府", region: "近畿", hubKey: "KYOTO" },
+      "27": { name: "大阪府", region: "近畿", hubKey: "OSAKA" },
+      "28": { name: "兵庫県", region: "近畿", hubKey: "HYOGO" },
+      "29": { name: "奈良県", region: "近畿", hubKey: "OSAKA" },
+      "30": { name: "和歌山県", region: "近畿", hubKey: "OSAKA" },
+      "31": { name: "鳥取県", region: "中四国", hubKey: "HIROSHIMA" },
+      "32": { name: "島根県", region: "中四国", hubKey: "HIROSHIMA" },
+      "33": { name: "岡山県", region: "中四国", hubKey: "HIROSHIMA" },
+      "34": { name: "広島県", region: "中四国", hubKey: "HIROSHIMA" },
+      "35": { name: "山口県", region: "中四国", hubKey: "FUKUOKA" },
+      "36": { name: "徳島県", region: "中四国", hubKey: "OSAKA" },
+      "37": { name: "香川県", region: "中四国", hubKey: "OSAKA" },
+      "38": { name: "愛媛県", region: "中四国", hubKey: "HIROSHIMA" },
+      "39": { name: "高知県", region: "中四国", hubKey: "OSAKA" },
+      "40": { name: "福岡県", region: "九州", hubKey: "FUKUOKA" },
+      "41": { name: "佐賀県", region: "九州", hubKey: "FUKUOKA" },
+      "42": { name: "長崎県", region: "九州", hubKey: "FUKUOKA" },
+      "43": { name: "熊本県", region: "九州", hubKey: "MIYAZAKI_CITY" },
+      "44": { name: "大分県", region: "九州", hubKey: "MIYAZAKI_CITY" },
+      "45": { name: "宮崎県 (宮崎市)", region: "九州", hubKey: "MIYAZAKI_CITY", isOrigin: true },
+      "46": { name: "鹿児島県", region: "九州", hubKey: "MIYAZAKI_CITY" },
+      "47": { name: "沖縄県", region: "沖縄", hubKey: "FUKUOKA" }
+    };
+  </script>
+
+  <script>
+    let currentItem = TOTAL_AGGREGATE;
+    let selectedCategory = 'ALL';
+    let selectedRegionFilter = 'ALL';
+    let isAnimationActive = true;
+    let activePrefId = 'OSAKA';
+
+    const svg = d3.select("#japanMapSvg");
+    const container = document.getElementById("mapContainer");
+    let gMain, gLand, gLines, gParticles, gHubs, zoomBehavior;
+    let geoPathGenerator = null;
+    let japanGeoFeatures = null;
+    let computedHubCoordinates = {};
+
+    const TOPOJSON_URL = "https://cdn.jsdelivr.net/npm/jpn-atlas@1/japan/japan.json";
+    const TOPOJSON_FALLBACK = "https://unpkg.com/jpn-atlas@1/japan/japan.json";
+
+    function getDefaultTransform() {
+      return d3.zoomIdentity.translate(10, 15).scale(0.96);
+    }
+
+    async function initWhiteMap() {
+      svg.selectAll("*").remove();
+      svg.attr("viewBox", "0 0 850 680");
+
+      svg.on("click", (event) => {
+        if (event.target === svg.node() || event.target.tagName === 'line' || event.target.id === 'mapContainer') {
+          resetToFullView();
+        }
+      });
+
+      gMain = svg.append("g").attr("id", "zoomLayer");
+      gLand = gMain.append("g").attr("id", "prefLayer");
+      gLines = gMain.append("g").attr("id", "linesLayer");
+      gParticles = gMain.append("g").attr("id", "particlesLayer");
+      gHubs = gMain.append("g").attr("id", "hubsLayer");
+
+      geoPathGenerator = d3.geoPath();
+
+      zoomBehavior = d3.zoom()
+        .scaleExtent([0.7, 5.0])
+        .on("zoom", (event) => {
+          gMain.attr("transform", event.transform);
+        });
+
+      svg.call(zoomBehavior);
+      svg.call(zoomBehavior.transform, getDefaultTransform());
+
+      drawMapGrid();
+
+      if (!japanGeoFeatures) {
+        try {
+          let japanTopology = null;
+          try {
+            japanTopology = await d3.json(TOPOJSON_URL);
+          } catch (err) {
+            console.warn("Primary CDN fallback to unpkg...", err);
+            japanTopology = await d3.json(TOPOJSON_FALLBACK);
+          }
+
+          if (japanTopology && japanTopology.objects && japanTopology.objects.prefectures) {
+            japanGeoFeatures = topojson.feature(japanTopology, japanTopology.objects.prefectures).features;
+            calculateAccurateHubCoordinates();
+          }
+        } catch (e) {
+          console.error("Failed to load TopoJSON", e);
+        } finally {
+          const loader = document.getElementById("mapLoading");
+          if (loader) {
+            loader.style.opacity = "0";
+            setTimeout(() => loader.remove(), 300);
+          }
+        }
+      }
+
+      renderWhiteMapPrefectures();
+      renderFlowsAndHubs();
+    }
+
+    function calculateAccurateHubCoordinates() {
+      computedHubCoordinates = {};
+      if (!japanGeoFeatures) return;
+
+      japanGeoFeatures.forEach(feature => {
+        const rawCode = String(feature.id).padStart(2, '0');
+        const info = PREF_CODE_INFO[rawCode];
+        if (!info) return;
+
+        const centroid = geoPathGenerator.centroid(feature);
+        if (centroid && !isNaN(centroid[0]) && !isNaN(centroid[1])) {
+          if (info.hubKey === 'MIYAZAKI_CITY' && rawCode === '45') {
+            // 宮崎市（県央東部海岸線寄り）に微調整
+            computedHubCoordinates['MIYAZAKI_CITY'] = { x: centroid[0] + 6, y: centroid[1] + 2 };
+          } else if (info.hubKey === 'TOKYO' && rawCode === '13') {
+            computedHubCoordinates['TOKYO'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'KANAGAWA' && rawCode === '14') {
+            computedHubCoordinates['KANAGAWA'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'SAITAMA' && rawCode === '11') {
+            computedHubCoordinates['SAITAMA'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'OSAKA' && rawCode === '27') {
+            computedHubCoordinates['OSAKA'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'HYOGO' && rawCode === '28') {
+            computedHubCoordinates['HYOGO'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'KYOTO' && rawCode === '26') {
+            computedHubCoordinates['KYOTO'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'AICHI' && rawCode === '23') {
+            computedHubCoordinates['AICHI'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'FUKUOKA' && rawCode === '40') {
+            computedHubCoordinates['FUKUOKA'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'HIROSHIMA' && rawCode === '34') {
+            computedHubCoordinates['HIROSHIMA'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'MIYAGI' && rawCode === '04') {
+            computedHubCoordinates['MIYAGI'] = { x: centroid[0], y: centroid[1] };
+          } else if (info.hubKey === 'HOKKAIDO' && rawCode === '01') {
+            computedHubCoordinates['HOKKAIDO'] = { x: centroid[0], y: centroid[1] };
+          }
+        }
+      });
+
+      Object.keys(computedHubCoordinates).forEach(k => {
+        if (PREFECTURE_HUBS[k]) {
+          PREFECTURE_HUBS[k].x = computedHubCoordinates[k].x;
+          PREFECTURE_HUBS[k].y = computedHubCoordinates[k].y;
+        }
+      });
+    }
+
+    function drawMapGrid() {
+      const gridG = gLand.append("g").attr("opacity", 0.4);
+      for (let x = 60; x <= 820; x += 55) {
+        gridG.append("line")
+          .attr("x1", x).attr("y1", 20)
+          .attr("x2", x).attr("y2", 660)
+          .attr("stroke", "#E2E8F0")
+          .attr("stroke-width", 0.75)
+          .attr("stroke-dasharray", "2, 4");
+      }
+      for (let y = 30; y <= 660; y += 55) {
+        gridG.append("line")
+          .attr("x1", 40).attr("y1", y)
+          .attr("x2", 820).attr("y2", y)
+          .attr("stroke", "#E2E8F0")
+          .attr("stroke-width", 0.75)
+          .attr("stroke-dasharray", "2, 4");
+      }
+    }
+
+    function renderWhiteMapPrefectures() {
+      gLand.selectAll(".pref-path").remove();
+
+      const shareMap = {};
+      currentItem.destinations.forEach(d => {
+        shareMap[d.hubId] = d.share;
+      });
+
+      if (japanGeoFeatures && japanGeoFeatures.length > 0) {
+        japanGeoFeatures.forEach(feature => {
+          const rawCode = String(feature.id).padStart(2, '0');
+          const info = PREF_CODE_INFO[rawCode] || { name: `都道府県${rawCode}`, region: "全国", hubKey: "TOKYO" };
+          const isOrigin = info.isOrigin === true || rawCode === '45';
+          const share = isOrigin ? 100 : (shareMap[info.hubKey] || 0);
+
+          let fillColor = "#FFFFFF";
+          let strokeColor = "#94A3B8";
+
+          if (isOrigin) {
+            fillColor = "#E0F2FE";
+            strokeColor = "#0284C7";
+          } else if (share > 0) {
+            if (share >= 25) {
+              fillColor = "#0284C7";
+              strokeColor = "#0369A1";
+            } else if (share >= 10) {
+              fillColor = "#38BDF8";
+              strokeColor = "#0284C7";
+            } else if (share >= 4) {
+              fillColor = "#BAE6FD";
+              strokeColor = "#38BDF8";
+            } else {
+              fillColor = "#F0F9FF";
+              strokeColor = "#CBD5E1";
+            }
+          }
+
+          const pathEl = gLand.append("path")
+            .attr("d", geoPathGenerator(feature))
+            .attr("class", `pref-path ${isOrigin ? 'pref-origin' : ''}`)
+            .attr("id", `pref-code-${rawCode}`)
+            .attr("fill", fillColor)
+            .attr("stroke", strokeColor);
+
+          pathEl
+            .on("mouseenter", (event) => {
+              const hub = PREFECTURE_HUBS[info.hubKey] || PREFECTURE_HUBS.OSAKA;
+              showPrefTooltip(event, info, hub, isOrigin ? 0 : share);
+            })
+            .on("mouseleave", hidePrefTooltip)
+            .on("click", () => {
+              selectPrefecture(info.hubKey || 'OSAKA');
+            });
+        });
+      }
+    }
+
+    function renderFlowsAndHubs() {
+      gLines.selectAll("*").remove();
+      gParticles.selectAll("*").remove();
+      gHubs.selectAll("*").remove();
+
+      const origin = PREFECTURE_HUBS.MIYAZAKI_CITY;
+      if (!origin || !origin.x) return;
+
+      // 宮崎市（起点）のパルス
+      const mG = gHubs.append("g").attr("transform", `translate(${origin.x}, ${origin.y})`);
+      mG.append("circle").attr("class", "radar-ring").attr("stroke", "#0284C7").attr("fill", "none");
+      mG.append("circle").attr("class", "radar-ring-2").attr("stroke", "#0284C7").attr("fill", "none");
+      mG.append("circle").attr("r", 7.5).attr("fill", "#0284C7").attr("stroke", "#FFFFFF").attr("stroke-width", 2.2);
+      
+      // 宮崎市アイコンピン
+      mG.append("text")
+        .attr("x", -18)
+        .attr("y", 22)
+        .attr("text-anchor", "middle")
+        .attr("font-size", "11px")
+        .attr("font-weight", "bold")
+        .attr("fill", "#0369A1")
+        .text("宮崎市 (生産・港湾・空港)");
+
+      const destinations = currentItem.destinations;
+      const themeColor = currentItem.color || "#0284C7";
+
+      destinations.forEach((dest, idx) => {
+        const hub = PREFECTURE_HUBS[dest.hubId];
+        if (!hub || !hub.x || !hub.y) return;
+
+        const dx = hub.x - origin.x;
+        const dy = hub.y - origin.y;
+        const curvature = 0.2;
+        const cx = (origin.x + hub.x) / 2 - dy * curvature;
+        const cy = (origin.y + hub.y) / 2 + dx * curvature;
+
+        const pathStr = `M ${origin.x},${origin.y} Q ${cx},${cy} ${hub.x},${hub.y}`;
+        const strokeWidth = Math.max(1.6, Math.min(5.5, (dest.share / 100) * 9.5));
+
+        // グロー線
+        gLines.append("path")
+          .attr("d", pathStr)
+          .attr("fill", "none")
+          .attr("stroke", themeColor)
+          .attr("stroke-width", strokeWidth + 2.5)
+          .attr("stroke-opacity", 0.25);
+
+        // 主動態線
+        const arcPath = gLines.append("path")
+          .attr("id", `flow-${hub.id}`)
+          .attr("d", pathStr)
+          .attr("fill", "none")
+          .attr("stroke", themeColor)
+          .attr("stroke-width", strokeWidth)
+          .attr("stroke-opacity", 0.92)
+          .attr("class", "flow-line-base");
+
+        // パーティクル
+        createParticle(arcPath.node(), themeColor, idx * 0.35, dest.share);
+
+        // 仕向先ハブ
+        const hG = gHubs.append("g")
+          .attr("transform", `translate(${hub.x}, ${hub.y})`)
+          .attr("class", "cursor-pointer")
+          .on("click", () => selectPrefecture(hub.id))
+          .on("mouseenter", (event) => {
+            const mockPref = { name: hub.pref };
+            showPrefTooltip(event, mockPref, hub, dest.share);
+          })
+          .on("mouseleave", hidePrefTooltip);
+
+        hG.append("circle")
+          .attr("r", 4 + (dest.share / 100) * 10)
+          .attr("fill", themeColor)
+          .attr("fill-opacity", 0.25)
+          .attr("stroke", themeColor)
+          .attr("stroke-width", 1.5)
+          .attr("class", "animate-pulse");
+
+        hG.append("circle")
+          .attr("r", 3.5)
+          .attr("fill", "#FFFFFF")
+          .attr("stroke", "#1E293B")
+          .attr("stroke-width", 1.2);
+
+        hG.append("text")
+          .attr("x", 8)
+          .attr("y", 4)
+          .attr("font-size", "10px")
+          .attr("font-weight", "bold")
+          .attr("fill", "#0F172A")
+          .attr("class", "select-none drop-shadow-xs")
+          .text(`${hub.pref.replace('府','').replace('県','')} ${dest.share}%`);
+      });
+    }
+
+    function createParticle(pathNode, color, delaySec, share) {
+      if (!pathNode || typeof pathNode.getTotalLength !== 'function') return;
+      const pathLength = pathNode.getTotalLength();
+      if (!pathLength || isNaN(pathLength)) return;
+
+      const particle = gParticles.append("circle")
+        .attr("r", Math.max(2.2, Math.min(5, 2 + (share / 100) * 4)))
+        .attr("fill", "#FFFFFF")
+        .attr("stroke", color)
+        .attr("stroke-width", 1.6)
+        .attr("class", "flow-particle pointer-events-none");
+
+      let start = null;
+      const duration = Math.max(2200, 3600 - (share / 100) * 1200);
+
+      function step(timestamp) {
+        if (!isAnimationActive) {
+          requestAnimationFrame(step);
+          return;
+        }
+        if (!start) start = timestamp + delaySec * 1000;
+        const progress = ((timestamp - start) % duration) / duration;
+        if (progress >= 0 && progress <= 1) {
+          try {
+            const pt = pathNode.getPointAtLength(progress * pathLength);
+            particle.attr("cx", pt.x).attr("cy", pt.y);
+          } catch (e) {}
+        }
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    function showPrefTooltip(event, info, hub, share) {
+      const tooltip = document.getElementById("marketTooltip");
+      if (!tooltip) return;
+
+      document.getElementById("ttName").innerText = info.name || hub.pref || '都道府県';
+      document.getElementById("ttShare").innerText = share > 0 ? `構成比 ${share}%` : (info.isOrigin ? '宮崎市 (生産・出荷拠点)' : '広域流通連携');
+      document.getElementById("ttMarket").innerText = hub.markets || '管内主要卸売市場';
+      
+      if (share > 0) {
+        const numericVol = parseInt(currentItem.annualVolume.replace(/[^0-9]/g, '')) || 0;
+        const approx = numericVol ? `約 ${Math.round((numericVol * share) / 100).toLocaleString()} t` : `${share}% 相当`;
+        document.getElementById("ttVolume").innerText = approx;
+      } else {
+        document.getElementById("ttVolume").innerText = info.isOrigin ? '宮崎市全域' : '域内流通便';
+      }
+
+      document.getElementById("ttRoute").innerText = hub.route || '宮崎港フェリー / 保冷トラック';
+      document.getElementById("ttLeadTime").innerText = hub.leadTime || '翌日〜翌々日';
+
+      tooltip.classList.remove("hidden");
+      const containerRect = container.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+
+      let left = event.clientX - containerRect.left + 15;
+      let top = event.clientY - containerRect.top + 15;
+
+      if (left + tooltipRect.width > containerRect.width - 15) {
+        left = event.clientX - containerRect.left - tooltipRect.width - 15;
+      }
+      if (top + tooltipRect.height > containerRect.height - 15) {
+        top = event.clientY - containerRect.top - tooltipRect.height - 15;
+      }
+
+      tooltip.style.left = `${Math.max(10, left)}px`;
+      tooltip.style.top = `${Math.max(10, top)}px`;
+    }
+
+    function hidePrefTooltip() {
+      const tooltip = document.getElementById("marketTooltip");
+      if (tooltip) tooltip.classList.add("hidden");
+    }
+
+    function resetToFullView() {
+      currentItem = TOTAL_AGGREGATE;
+      selectedCategory = 'ALL';
+      selectedRegionFilter = 'ALL';
+
+      const searchInput = document.getElementById("searchInput");
+      if (searchInput) searchInput.value = '';
+
+      const catBtns = document.querySelectorAll(".cat-btn");
+      catBtns.forEach(btn => {
+        const isAll = btn.getAttribute("data-category") === 'ALL';
+        btn.classList.toggle("active", isAll);
+        btn.classList.toggle("border-sky-500", isAll);
+        btn.classList.toggle("bg-sky-50", isAll);
+        btn.classList.toggle("text-sky-800", isAll);
+        btn.classList.toggle("border-slate-200", !isAll);
+        btn.classList.toggle("bg-slate-50/70", !isAll);
+        btn.classList.toggle("text-slate-700", !isAll);
+      });
+
+      const pills = document.querySelectorAll(".region-pill");
+      pills.forEach(pill => {
+        const isAll = pill.getAttribute("data-region") === 'ALL';
+        pill.classList.toggle("active", isAll);
+        pill.classList.toggle("bg-slate-800", isAll);
+        pill.classList.toggle("text-white", isAll);
+        pill.classList.toggle("bg-slate-100", !isAll);
+        pill.classList.toggle("text-slate-700", !isAll);
+      });
+
+      document.getElementById("currentSelectionBadge").innerText = `${TOTAL_AGGREGATE.name} の国内出荷白地図`;
+      document.getElementById("selectedPrefTitle").innerText = `選択地域: 全国の主要仕向市場（宮崎市動態モード）`;
+      document.getElementById("selectedPrefDesc").innerText = `宮崎市内で生産された冬春きゅうり・ピーマン、天日干し大根、日向夏、マンゴー、宮崎牛、青島伊勢海老等は、宮崎港カーフェリーや宮崎空港航空便を通じて全国の卸売市場・百貨店へ届きます。`;
+      document.getElementById("selectedPrefTransit").innerText = `宮崎港フェリー / 宮崎空港チルド空輸 / 宮崎IC高速トラック`;
+
+      svg.transition().duration(500).call(
+        zoomBehavior.transform,
+        getDefaultTransform()
+      );
+
+      renderWhiteMapPrefectures();
+      renderFlowsAndHubs();
+      updateAnalyticsPanel();
+      renderSidebarList();
+    }
+
+    function selectPrefecture(hubKey) {
+      const hub = PREFECTURE_HUBS[hubKey];
+      if (!hub) return;
+      activePrefId = hubKey;
+
+      document.getElementById("selectedPrefTitle").innerText = `選択地域: ${hub.name}`;
+      document.getElementById("selectedPrefDesc").innerText = hub.desc || `${hub.region}エリアの主要中央市場へ宮崎市から安定輸送されています。`;
+      document.getElementById("selectedPrefTransit").innerText = hub.route || '宮崎港フェリー / 保冷トラック';
+
+      const scale = 1.65;
+      const tx = 425 - hub.x * scale;
+      const ty = 340 - hub.y * scale;
+
+      svg.transition().duration(600).call(
+        zoomBehavior.transform,
+        d3.zoomIdentity.translate(tx, ty).scale(scale)
+      );
+    }
+
+    function renderSidebarList(filterText = '') {
+      const listEl = document.getElementById("productList");
+      listEl.innerHTML = "";
+
+      let filtered = PRODUCE_DATABASE;
+      if (selectedCategory !== 'ALL') {
+        filtered = filtered.filter(item => item.category === selectedCategory);
+      }
+      if (selectedRegionFilter !== 'ALL') {
+        filtered = filtered.filter(item => {
+          return item.destinations.some(d => {
+            const h = PREFECTURE_HUBS[d.hubId];
+            return h && h.region === selectedRegionFilter;
+          });
+        });
+      }
+      if (filterText.trim()) {
+        const q = filterText.toLowerCase();
+        filtered = filtered.filter(item => 
+          item.name.toLowerCase().includes(q) || 
+          item.cityArea.toLowerCase().includes(q) || 
+          item.categoryName.toLowerCase().includes(q) || 
+          item.desc.toLowerCase().includes(q)
+        );
+      }
+
+      document.getElementById("itemCountLabel").innerText = `表示: ${filtered.length}品目`;
+
+      // 総合集計カード
+      if (selectedCategory === 'ALL' && selectedRegionFilter === 'ALL' && !filterText) {
+        const allCard = document.createElement("div");
+        const isSelected = currentItem.id === 'ALL';
+        allCard.className = `p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between shadow-2xs ${
+          isSelected ? 'bg-sky-50 border-sky-500 text-sky-950 ring-2 ring-sky-500/20' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+        }`;
+        allCard.innerHTML = `
+          <div>
+            <div class="text-[10px] font-bold text-sky-600 uppercase flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+              宮崎市 総合流通動態
+            </div>
+            <div class="text-sm font-bold text-slate-800">宮崎市産農畜水産物 総集計</div>
+            <div class="text-[11px] text-slate-500">佐土原・田野・清武・高岡・青島全域の配分</div>
+          </div>
+          <i data-lucide="compass" class="w-5 h-5 text-sky-600"></i>
+        `;
+        allCard.onclick = () => selectItem(TOTAL_AGGREGATE);
+        listEl.appendChild(allCard);
+      }
+
+      // カテゴリー別総集計カード
+      if (selectedCategory !== 'ALL' && CATEGORY_AGGREGATES[selectedCategory] && !filterText) {
+        const catAgg = CATEGORY_AGGREGATES[selectedCategory];
+        const isSelected = currentItem.id === catAgg.id;
+        const catCard = document.createElement("div");
+        catCard.className = `p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between shadow-2xs ${
+          isSelected ? 'bg-sky-50 border-sky-500 text-sky-950 ring-2 ring-sky-500/20' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+        }`;
+        catCard.innerHTML = `
+          <div>
+            <div class="text-[10px] font-bold text-sky-600 uppercase flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+              カテゴリー総集計
+            </div>
+            <div class="text-sm font-bold text-slate-800">${catAgg.name}</div>
+            <div class="text-[11px] text-slate-500">${catAgg.rank} • 年間 ${catAgg.annualVolume}</div>
+          </div>
+          <i data-lucide="compass" class="w-5 h-5 text-sky-600"></i>
+        `;
+        catCard.onclick = () => selectItem(catAgg);
+        listEl.appendChild(catCard);
+      }
+
+      filtered.forEach(item => {
+        const isSelected = currentItem.id === item.id;
+        const card = document.createElement("div");
+        card.className = `p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between group shadow-2xs ${
+          isSelected ? 'bg-sky-50/80 border-sky-500 text-sky-950 ring-2 ring-sky-500/20' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+        }`;
+
+        card.innerHTML = `
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold text-slate-800 group-hover:text-sky-600 transition-colors">${item.name}</span>
+              <span class="text-[9px] px-1.5 py-0.5 rounded font-bold border" style="background: ${item.color}15; color: ${item.color}; border-color: ${item.color}35;">${item.categoryName}</span>
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1 flex items-center gap-2">
+              <span class="text-sky-700 font-semibold">${item.cityArea}</span>
+              <span>•</span>
+              <span>年間: ${item.annualVolume}</span>
+            </div>
+          </div>
+          <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400 group-hover:text-sky-600 group-hover:translate-x-0.5 transition-transform"></i>
+        `;
+        card.onclick = () => selectItem(item);
+        listEl.appendChild(card);
+      });
+
+      lucide.createIcons();
+    }
+
+    function selectItem(item) {
+      currentItem = item;
+      document.getElementById("currentSelectionBadge").innerText = `${item.name} の国内出荷白地図`;
+
+      updateAnalyticsPanel();
+      renderWhiteMapPrefectures();
+      renderFlowsAndHubs();
+      renderSidebarList(document.getElementById("searchInput").value);
+    }
+
+    function updateAnalyticsPanel() {
+      document.getElementById("activeCategoryTag").innerText = currentItem.categoryName;
+      document.getElementById("activeItemTitle").innerText = currentItem.name;
+      document.getElementById("itemRankBadge").innerText = currentItem.rank;
+      document.getElementById("activeItemDesc").innerText = currentItem.desc;
+      document.getElementById("activeCityArea").innerText = currentItem.cityArea || '宮崎市全域';
+      document.getElementById("statAnnualVolume").innerText = currentItem.annualVolume;
+      document.getElementById("statPeakSeason").innerText = currentItem.peakSeason;
+
+      // 仕向先シェアバー
+      const shareContainer = document.getElementById("marketShareBars");
+      shareContainer.innerHTML = "";
+      currentItem.destinations.slice(0, 6).forEach(dest => {
+        const hub = PREFECTURE_HUBS[dest.hubId];
+        const row = document.createElement("div");
+        row.className = "space-y-1 cursor-pointer hover:bg-slate-100/60 p-1 rounded-md transition";
+        row.onclick = () => selectPrefecture(dest.hubId);
+
+        row.innerHTML = `
+          <div class="flex justify-between text-xs">
+            <span class="text-slate-800 font-medium">${hub ? hub.name.split(' (')[0] : dest.hubId}</span>
+            <span class="font-bold text-sky-700">${dest.share}%</span>
+          </div>
+          <div class="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-700" style="width: ${dest.share}%; background: ${currentItem.color || '#0284C7'};"></div>
+          </div>
+        `;
+        shareContainer.appendChild(row);
+      });
+
+      // 月別カレンダー
+      const seasonMatrix = document.getElementById("seasonMatrix");
+      seasonMatrix.innerHTML = "";
+      currentItem.months.forEach((val, idx) => {
+        const col = document.createElement("div");
+        col.className = "flex flex-col items-center gap-1";
+        const heightPercent = Math.round(val * 100);
+        col.innerHTML = `
+          <div class="h-9 w-full bg-slate-200/80 rounded-t flex items-end justify-center p-0.5 border border-slate-300/40">
+            <div class="w-full rounded-t transition-all duration-500" style="height: ${heightPercent}%; background: ${val > 0.7 ? '#10B981' : val > 0.3 ? '#F59E0B' : '#94A3B8'};"></div>
+          </div>
+          <span class="text-[9px] text-slate-500 font-bold">${idx + 1}</span>
+        `;
+        seasonMatrix.appendChild(col);
+      });
+    }
+
+    function updateCategoryCounts() {
+      document.getElementById("cntAll").innerText = PRODUCE_DATABASE.length;
+      document.getElementById("cntVegFruit").innerText = PRODUCE_DATABASE.filter(i => i.category === 'VEG_FRUIT').length;
+      document.getElementById("cntHeritage").innerText = PRODUCE_DATABASE.filter(i => i.category === 'HERITAGE_ROOT').length;
+      document.getElementById("cntFruit").innerText = PRODUCE_DATABASE.filter(i => i.category === 'FRUIT').length;
+      document.getElementById("cntMeat").innerText = PRODUCE_DATABASE.filter(i => i.category === 'MEAT').length;
+      document.getElementById("cntSeafood").innerText = PRODUCE_DATABASE.filter(i => i.category === 'SEAFOOD').length;
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+      updateCategoryCounts();
+      renderSidebarList();
+      updateAnalyticsPanel();
+      initWhiteMap();
+
+      const catBtns = document.querySelectorAll(".cat-btn");
+      catBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const cat = btn.getAttribute("data-category");
+
+          if (cat === 'ALL') {
+            resetToFullView();
+            return;
+          }
+
+          catBtns.forEach(b => {
+            b.classList.remove("active", "border-sky-500", "bg-sky-50", "text-sky-800");
+            b.classList.add("border-slate-200", "bg-slate-50/70", "text-slate-700");
+          });
+          btn.classList.add("active", "border-sky-500", "bg-sky-50", "text-sky-800");
+          btn.classList.remove("border-slate-200", "bg-slate-50/70", "text-slate-700");
+
+          selectedCategory = cat;
+
+          if (CATEGORY_AGGREGATES[cat]) {
+            selectItem(CATEGORY_AGGREGATES[cat]);
+          } else {
+            renderSidebarList(document.getElementById("searchInput").value);
+          }
+        });
+      });
+
+      const pills = document.querySelectorAll(".region-pill");
+      pills.forEach(pill => {
+        pill.addEventListener("click", () => {
+          const reg = pill.getAttribute("data-region");
+
+          pills.forEach(p => {
+            p.classList.remove("active", "bg-slate-800", "text-white");
+            p.classList.add("bg-slate-100", "text-slate-700");
+          });
+          pill.classList.add("active", "bg-slate-800", "text-white");
+          pill.classList.remove("bg-slate-100", "text-slate-700");
+
+          selectedRegionFilter = reg;
+
+          if (reg === 'ALL' && currentItem.id === 'ALL') {
+            resetToFullView();
+          } else {
+            renderSidebarList(document.getElementById("searchInput").value);
+          }
+        });
+      });
+
+      const searchInput = document.getElementById("searchInput");
+      searchInput.addEventListener("input", (e) => {
+        renderSidebarList(e.target.value);
+      });
+
+      const toggleAnimBtn = document.getElementById("toggleAnimBtn");
+      const animIcon = document.getElementById("animIcon");
+      toggleAnimBtn.addEventListener("click", () => {
+        isAnimationActive = !isAnimationActive;
+        if (isAnimationActive) {
+          animIcon.setAttribute("data-lucide", "pause");
+          animIcon.classList.remove("text-slate-400");
+          animIcon.classList.add("text-sky-600");
+        } else {
+          animIcon.setAttribute("data-lucide", "play");
+          animIcon.classList.remove("text-sky-600");
+          animIcon.classList.add("text-slate-400");
+        }
+        lucide.createIcons();
+      });
+
+      document.getElementById("zoomInBtn").addEventListener("click", () => {
+        svg.transition().duration(300).call(zoomBehavior.scaleBy, 1.3);
+      });
+      document.getElementById("zoomOutBtn").addEventListener("click", () => {
+        svg.transition().duration(300).call(zoomBehavior.scaleBy, 0.7);
+      });
+      
+      document.getElementById("resetViewBtn").addEventListener("click", () => {
+        resetToFullView();
+      });
+    });
+  </script>
+</body>
+</html>
